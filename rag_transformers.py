@@ -1,12 +1,11 @@
 """
 RAG pipeline using LoRA-fine-tuned TinyLlama model.
-This version demonstrates model training + inference.
-Inference is CPU-based and intentionally slow.
+CPU-based inference (intentionally slow but correct).
 """
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from langchain_core.prompts import PromptTemplate
@@ -16,6 +15,7 @@ from langchain_core.output_parsers import StrOutputParser
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import torch
+import os
 
 
 # =========================
@@ -28,9 +28,8 @@ tokenizer = AutoTokenizer.from_pretrained(ADAPTER_ID)
 
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_ID,
-    device_map="auto",
-    dtype=torch.float16
-)
+    torch_dtype=torch.float32
+).to("cpu")
 
 model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
 
@@ -39,13 +38,23 @@ model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
 # LLM GENERATION FUNCTION
 # =========================
 def llm_generate(prompt: str) -> str:
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    inputs = tokenizer(prompt, return_tensors="pt")
     outputs = model.generate(
         **inputs,
-        max_new_tokens=100
+        max_new_tokens=50,
+        do_sample=False
     )
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    # 🔥 HARD CLEAN: keep only answer text
+    if "Final Answer:" in text:
+        text = text.split("Final Answer:")[-1]
+
+    # extra safety
+    text = text.strip().split("\n")[0]
+
+    return text
 
 # =========================
 # FORMAT DOCUMENTS
@@ -61,8 +70,8 @@ loader = PyPDFLoader("data/kech106.pdf")
 documents = loader.load()
 
 splitter = RecursiveCharacterTextSplitter(
-    chunk_size=300,
-    chunk_overlap=30
+    chunk_size=200,
+    chunk_overlap=20
 )
 chunks = splitter.split_documents(documents)
 
@@ -70,8 +79,6 @@ chunks = splitter.split_documents(documents)
 # =========================
 # EMBEDDINGS + VECTOR STORE
 # =========================
-import os
-
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
@@ -88,14 +95,21 @@ else:
         allow_dangerous_deserialization=True
     )
 
-# LIMIT retrieval to top 2 (FASTER + CLEANER)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+retriever = vectorstore.as_retriever(search_kwargs={"k": 1})
+
 
 # =========================
 # PROMPT
 # =========================
 prompt = PromptTemplate.from_template(
-    """Answer the question using ONLY the context below.
+    """You are an NCERT teacher.
+
+Answer the question using ONLY the context.
+Rules:
+- Give only the definition
+- Ignore exercise questions
+- Answer in 1–2 lines
+- Stop after the answer
 
 Context:
 {context}
@@ -103,12 +117,12 @@ Context:
 Question:
 {question}
 
-Answer:"""
+Final Answer:"""
 )
 
 
 # =========================
-# RAG CHAIN (CORRECT)
+# RAG CHAIN
 # =========================
 rag_chain = (
     {
@@ -123,7 +137,7 @@ rag_chain = (
 
 
 # =========================
-# RUN QUERY
+# RUN LOOP
 # =========================
 print("\n✅ RAG system ready")
 print("Type your question below (type 'exit' to quit)\n")
