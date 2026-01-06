@@ -1,24 +1,21 @@
-# Environments
+# virtual env
 venv/
 venv310/
-__pycache__/
-*.pyc
 
-# HuggingFace / Models
-.cache/
-models/
-*.bin
-*.safetensors
-
-# Vector DB
+# vector db
 vectorstore/
+faiss_index/
 *.faiss
 *.pkl
 
-# Data
+# data
 data/
 pdfs/
-ncert_pdfs/
 
-# OS files
-.DS_Store
+# cache
+__pycache__/
+.cache/
+
+# models
+*.bin
+*.safetensors
